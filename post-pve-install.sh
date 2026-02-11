@@ -49,9 +49,31 @@ msg_error() {
   echo -e "${BFR} ${CROSS} ${RD}${msg}${CL}"
 }
 
+# Clean conflicting .sources files introduced in PVE v9
+clean_sources() {
+  msg_info "Checking for conflicting .sources files"
+  # List of default PVE .sources files that cause conflicts
+  local source_files=(
+    "/etc/apt/sources.list.d/debian.sources"
+    "/etc/apt/sources.list.d/pve-enterprise.sources"
+    "/etc/apt/sources.list.d/ceph.sources"
+  )
+
+  for file in "${source_files[@]}"; do
+    if [ -f "$file" ]; then
+      mv "$file" "${file}.bak"
+      echo -e "\n   - Backup created: ${file}.bak"
+    fi
+  done
+  msg_ok "Cleaned up conflicting .sources files"
+}
+
 # Start the routines
 start_routines() {
   header_info
+  
+  # RUN THE CLEANUP FIRST to prevent duplicate warnings
+  clean_sources
 
   CHOICE=$(whiptail --backtitle "Proxmox VE Helper Scripts" --title "SOURCES" --menu "The package manager will use the correct sources to update and install packages on your Proxmox VE server.\n \nCorrect Proxmox VE sources?" 14 58 2 \
     "yes" " " \
@@ -60,11 +82,13 @@ start_routines() {
   yes)
     msg_info "Correcting Proxmox VE Sources"
     cat <<EOF >/etc/apt/sources.list
-deb http://deb.debian.org/debian bookworm main contrib
-deb http://deb.debian.org/debian bookworm-updates main contrib
-deb http://security.debian.org/debian-security bookworm-security main contrib
+deb http://deb.debian.org/debian trixie main contrib
+deb http://deb.debian.org/debian trixie-updates main contrib
+deb http://security.debian.org/debian-security trixie-security main contrib
 EOF
-    echo 'APT::Get::Update::SourceListWarnings::NonFreeFirmware "false";' >/etc/apt/apt.conf.d/no-bookworm-firmware.conf
+    # Remove old firmware config if it exists
+    rm -f /etc/apt/apt.conf.d/no-bookworm-firmware.conf
+    echo 'APT::Get::Update::SourceListWarnings::NonFreeFirmware "false";' >/etc/apt/apt.conf.d/no-trixie-firmware.conf
     msg_ok "Corrected Proxmox VE Sources"
     ;;
   no)
@@ -78,7 +102,8 @@ EOF
   case $CHOICE in
   yes)
     msg_info "Disabling 'pve-enterprise' repository"
-    echo "# deb https://enterprise.proxmox.com/debian/pve bookworm pve-enterprise" >/etc/apt/sources.list.d/pve-enterprise.list
+    # Create a commented-out list file to ensure no enterprise repo is active
+    echo "# deb https://enterprise.proxmox.com/debian/pve trixie pve-enterprise" >/etc/apt/sources.list.d/pve-enterprise.list
     msg_ok "Disabled 'pve-enterprise' repository"
     ;;
   no)
@@ -92,7 +117,7 @@ EOF
   case $CHOICE in
   yes)
     msg_info "Enabling 'pve-no-subscription' repository"
-    echo "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription" >/etc/apt/sources.list.d/pve-install-repo.list
+    echo "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription" >/etc/apt/sources.list.d/pve-install-repo.list
     msg_ok "Enabled 'pve-no-subscription' repository"
     ;;
   no)
@@ -107,10 +132,10 @@ EOF
     yes)
       msg_info "Correcting 'ceph package repositories'"
       cat <<EOF >/etc/apt/sources.list.d/ceph.list
-# deb https://enterprise.proxmox.com/debian/ceph-quincy bookworm enterprise
-# deb http://download.proxmox.com/debian/ceph-quincy bookworm no-subscription
-# deb https://enterprise.proxmox.com/debian/ceph-reef bookworm enterprise
-# deb http://download.proxmox.com/debian/ceph-reef bookworm no-subscription
+# deb https://enterprise.proxmox.com/debian/ceph-reef trixie enterprise
+# deb http://download.proxmox.com/debian/ceph-reef trixie no-subscription
+# deb https://enterprise.proxmox.com/debian/ceph-squid trixie enterprise
+# deb http://download.proxmox.com/debian/ceph-squid trixie no-subscription
 EOF
       msg_ok "Corrected 'ceph package repositories'"
       ;;
@@ -125,7 +150,7 @@ EOF
   case $CHOICE in
   yes)
     msg_info "Adding 'pvetest' repository and set disabled"
-    echo "# deb http://download.proxmox.com/debian/pve bookworm pvetest" >/etc/apt/sources.list.d/pvetest-for-beta.list
+    echo "# deb http://download.proxmox.com/debian/pve trixie pvetest" >/etc/apt/sources.list.d/pvetest-for-beta.list
     msg_ok "Added 'pvetest' repository"
     ;;
   no)
@@ -169,7 +194,7 @@ EOF
       ;;
     esac
   fi
-  
+   
   if systemctl is-active --quiet pve-ha-lrm; then
     CHOICE=$(whiptail --backtitle "Proxmox VE Helper Scripts" --title "HIGH AVAILABILITY" --menu "If you plan to utilize a single node instead of a clustered environment, you can disable unnecessary high availability (HA) services, thus reclaiming system resources.\n\nIf HA becomes necessary at a later stage, the services can be re-enabled.\n\nDisable high availability?" 18 58 2 \
       "yes" " " \
@@ -187,7 +212,7 @@ EOF
       ;;
     esac
   fi
-  
+   
   CHOICE=$(whiptail --backtitle "Proxmox VE Helper Scripts" --title "UPDATE" --menu "\nUpdate Proxmox VE now?" 11 58 2 \
     "yes" " " \
     "no" " " 3>&2 2>&1 1>&3)
@@ -231,9 +256,9 @@ while true; do
   esac
 done
 
-if ! pveversion | grep -Eq "pve-manager/8.[0-3]"; then
+if ! pveversion | grep -Eq "pve-manager/9\."; then
   msg_error "This version of Proxmox Virtual Environment is not supported"
-  echo -e "Requires Proxmox Virtual Environment Version 8.0 or later."
+  echo -e "Requires Proxmox Virtual Environment Version 9.0 or later."
   echo -e "Exiting..."
   sleep 2
   exit
